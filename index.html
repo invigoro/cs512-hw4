@@ -102,22 +102,62 @@ uniform mat4 uProjectionMatrix;
 uniform mat4 uModelTransformationMatrix;
 
 out vec3 vColor;
+out vec3 vWorldPos;
+out vec3 vNormalApprox;
 
 void main() {
-  gl_Position = uProjectionMatrix * uModelViewMatrix * uModelTransformationMatrix * vec4(aPosition,1.0);
+  // compute model-space -> view-space transformed position
+  vec4 worldPos4 = uModelTransformationMatrix * vec4(aPosition, 1.0);
+  vec4 viewPos4 = uModelViewMatrix * worldPos4;
+
+  // approximate normal by transforming the vertex direction (works okay for roughly-origin-centered shapes)
+  vec3 normalApprox = normalize((uModelTransformationMatrix * vec4(aPosition, 0.0)).xyz);
+
   vColor = aColor;
+  vWorldPos = viewPos4.xyz;        // position in view-space for lighting
+  vNormalApprox = normalApprox;    // model-space normal approx (we will use view-space L but normal is okay approx)
+
+  gl_Position = uProjectionMatrix * viewPos4;
 }
 </script>
   <!-- Fragment Shader -->
   <script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
 precision mediump float;
+
 in vec3 vColor;
-uniform float uOpacity; 
+in vec3 vWorldPos;       // view-space pos
+in vec3 vNormalApprox;   // approx normal in model-space
+
+uniform float uOpacity;
+uniform vec3 uAmbientColor;
+
+// point lights (arrays)
+uniform int uNumLights;
+uniform vec3 uLightPositions[32]; // positions in view-space (limit 32; match JS)
+uniform vec3 uLightColors[32];
 
 out vec4 fragColor;
 
 void main() {
-  fragColor = vec4(vColor, uOpacity);
+  // Convert normal approximation to view-space (approx): we used model-space normal but it's acceptable here
+  vec3 N = normalize(vNormalApprox);
+
+  // accumulate diffuse lighting
+  vec3 diffuse = vec3(0.0);
+  for (int i = 0; i < uNumLights; ++i) {
+    vec3 L = normalize(uLightPositions[i] - vWorldPos); // vector from surface point to light (view-space)
+    float ndotl = max(dot(N, L), 0.0);
+    // optionally add distance attenuation (simple)
+    float dist = length(uLightPositions[i] - vWorldPos);
+    float att = 1.0 / (1.0 + 0.02 * dist * dist); // tweak constants as needed
+    diffuse += uLightColors[i] * ndotl * att;
+  }
+
+  vec3 color = vColor * (uAmbientColor + diffuse);
+  // tone clamp
+  color = clamp(color, 0.0, 1.0);
+
+  fragColor = vec4(color, uOpacity);
 }
 </script>
   <!--Object picker by color. Does not show in the GUI for editing the shaders-->
@@ -162,6 +202,31 @@ void main() {
     const canvas = document.getElementById("glcanvas");
     const gl = canvas.getContext("webgl2");
     if (!gl) alert("WebGL2 not supported");
+
+    // --- star lights setup ---
+const MAX_STARS = 32; // must match shader array size
+let stars = []; // array of {pos:[x,y,z], color:[r,g,b]}
+
+function makeRandomStar(radiusMin = 20, radiusMax = 60) {
+  // place far away in world space (not view-space). We'll transform to view-space in render()
+  const phi = Math.acos(2 * Math.random() - 1); // elevation
+  const theta = Math.random() * Math.PI * 2;
+  const r = radiusMin + Math.random() * (radiusMax - radiusMin);
+  const x = r * Math.sin(phi) * Math.cos(theta);
+  const y = r * Math.cos(phi);
+  const z = r * Math.sin(phi) * Math.sin(theta);
+  // small warm-white variation
+  const c = 0.8 + Math.random() * 0.4;
+  return { pos: [x, y, z], color: [c, c, c] };
+}
+
+function initStars(count = 12) {
+  stars = [];
+  for (let i = 0; i < Math.min(count, MAX_STARS); ++i) {
+    stars.push(makeRandomStar());
+  }
+}
+initStars(14);
 
     let vertEditor = document.getElementById("vertEditor");
     let fragEditor = document.getElementById("fragEditor");
@@ -254,6 +319,18 @@ void main() {
         uMVM = gl.getUniformLocation(program, "uModelViewMatrix");
         uPM = gl.getUniformLocation(program, "uProjectionMatrix");
         uMTM = gl.getUniformLocation(program, "uModelTransformationMatrix");
+
+//lighting uniforms
+uAmbientColor = gl.getUniformLocation(program, "uAmbientColor");
+uNumLightsLoc = gl.getUniformLocation(program, "uNumLights");
+uLightPositionsLoc = []; // we'll upload as flat arrays
+uLightColorsLoc = [];
+// The easiest is to set by name uLightPositions[0], uLightPositions[1], ...:
+for (let i = 0; i < MAX_STARS; ++i) {
+  uLightPositionsLoc.push(gl.getUniformLocation(program, `uLightPositions[${i}]`));
+  uLightColorsLoc.push(gl.getUniformLocation(program, `uLightColors[${i}]`));
+}
+
       } catch (e) { console.error(e); }
     }
     initShaderProgram();
@@ -598,6 +675,28 @@ function hexToRgbArray(hex) {
       // Camera transform (modelViewMatrix)
       let modelViewMatrix = mat4Translate(mat4Identity(), [camX, camY, camZ]);
       gl.uniformMatrix4fv(uMVM, false, modelViewMatrix);
+
+      gl.uniform3fv(uAmbientColor, new Float32Array([0.05, 0.05, 0.06]));
+
+// compute view-space positions for each star and upload
+const numToUpload = Math.min(stars.length, MAX_STARS);
+gl.uniform1i(uNumLightsLoc, numToUpload);
+
+// We need to transform star world positions into view-space: viewPos = uModelViewMatrix * vec4(worldPos,1)
+for (let i = 0; i < numToUpload; ++i) {
+  const s = stars[i];
+  const wp = s.pos; // world position [x,y,z]
+
+  // multiply 4x4 matrix (column-major) uMVM by vec4(wp,1)
+  // uMVM is the same view matrix you passed earlier as "modelViewMatrix"
+  const M = modelViewMatrix; // that's the js variable you used to upload uMVM earlier
+  const vx = M[0]*wp[0] + M[4]*wp[1] + M[8]*wp[2] + M[12];
+  const vy = M[1]*wp[0] + M[5]*wp[1] + M[9]*wp[2] + M[13];
+  const vz = M[2]*wp[0] + M[6]*wp[1] + M[10]*wp[2] + M[14];
+  // upload as view-space
+  gl.uniform3fv(uLightPositionsLoc[i], new Float32Array([vx, vy, vz]));
+  gl.uniform3fv(uLightColorsLoc[i], new Float32Array(stars[i].color));
+}
 
       time = (Date.now() - startTime) / 1000;  // seconds passed total
       timeDiff = (Date.now() - prevFrameTime) / 1000; //seconds since last frame
