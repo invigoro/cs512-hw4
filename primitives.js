@@ -1,11 +1,11 @@
 
 //for storing buffer objs and individual shape data (rot, pos, scale)
 class shape {
-  constructor(bvbo, bnbo, bibo, bnorbo, len, vertexCount, id, color1 = null, color2 = null) {
+  constructor(bvbo, bnbo, bibo, bnorm, len, vertexCount, id, color1 = null, color2 = null) {
     this.vbo = bvbo;
     this.nbo = bnbo;
     this.ibo = bibo;
-    this.norbo = bnorbo;
+    this.normalBuffer = bnorm;
     this.length = len;
     this.vertexCount = vertexCount;
     this.id = id;
@@ -13,6 +13,12 @@ class shape {
     //redudancy makes it so the conversion has to happen less frequently. Not that this is computationally intensive lol
     this.color1 = color1;
     this.color2 = color2;
+    this.material = {
+  ambient: 0.3,     // ambient reflectivity
+  diffuse: 0.8,     // diffuse reflectivity
+  specular: 1.0,    // specular reflectivity
+  shininess: 32.0   // size of highlight (higher = smaller + shinier)
+};
   }
   posX = 0;
   posY = 0;
@@ -37,15 +43,6 @@ class shape {
   //colors
   color1;
   color2;
-
-isLight = false;          
-lightIntensity = 1.0;     
-
-getWorldPosition() {
-  // Extract position from nodeTransformMatrix
-  const m = this.nodeTransformMatrix;
-  return [m[12], m[13], m[14]];
-}
 
   getRotationMatrix() {
     const cx = Math.cos(this.rotY), sx = Math.sin(this.rotY);
@@ -120,8 +117,6 @@ setColors(c1, c2) {
 gl.bindBuffer(gl.ARRAY_BUFFER, this.nbo);
   this.color1 = c1;
   this.color2 = c2;
-  console.log(c1);
-  console.log(c2);
   let colors = interpolateColors(this.vertexCount, 0, c1, c2);
   gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW)
 }
@@ -214,320 +209,198 @@ function scale(array, factor = 1) {
 }
 
 function createCube(radius = 1) {
-  const normals = computeVertexNormals(cubePositions, cubeIndices);
-  return {
-    positions: scale(cubePositions, radius),
-    colors: interpolateColors(cubePositions.length),
-    indices: cubeIndices,
-    normals: normals
-  };
+  const positions = scale(cubePositions, radius);
+  const indices = cubeIndices;
+  const colors = interpolateColors(positions.length);
+  const normals = computeNormals(positions, indices);
+  return { positions, colors, indices, normals };
 }
 
 function createTetrahedron(radius = 1) {
-  const normals = computeVertexNormals(tetrahedronPositions, tetrahedronIndices);
-  return {
-    positions: scale(tetrahedronPositions, radius),
-    colors: interpolateColors(tetrahedronPositions.length),
-    indices: tetrahedronIndices,
-    normals: normals
-  };
+  const positions = scale(tetrahedronPositions, radius);
+  const indices = tetrahedronIndices;
+  const colors = interpolateColors(positions.length);
+  const normals = computeNormals(positions, indices);
+  return { positions, colors, indices, normals };
 }
 
 
 function createCylinder(radius = 1, height = 2, segments = 32) {
-  const positions = [];
-  const indices = [];
+  const { positions, indices } = (function() {
+    const positions = [];
+    const indices = [];
+    for (let i = 0; i <= segments; i++) {
+      const theta = (i / segments) * 2 * Math.PI;
+      const x = radius * Math.cos(theta);
+      const z = radius * Math.sin(theta);
+      positions.push(x, height / 2, z);
+      positions.push(x, -height / 2, z);
+    }
+    const topCenterIndex = positions.length / 3;
+    positions.push(0, height / 2, 0);
+    const bottomCenterIndex = positions.length / 3;
+    positions.push(0, -height / 2, 0);
+    for (let i = 0; i < segments; i++) {
+      let p1 = i * 2, p2 = p1 + 1;
+      let p3 = ((i + 1) % segments) * 2, p4 = p3 + 1;
+      indices.push(p1, p3, p2);
+      indices.push(p3, p4, p2);
+    }
+    for (let i = 0; i < segments; i++) {
+      let p1 = ((i + 1) % segments) * 2;
+      let p2 = i * 2;
+      indices.push(topCenterIndex, p1, p2);
+    }
+    for (let i = 0; i < segments; i++) {
+      let p1 = i * 2 + 1;
+      let p2 = ((i + 1) % segments) * 2 + 1;
+      indices.push(bottomCenterIndex, p1, p2);
+    }
+    return { positions: new Float32Array(positions), indices: new Uint16Array(indices) };
+  })();
 
-  // Generate vertices
-  for (let i = 0; i <= segments; i++) {
-    const theta = (i / segments) * 2 * Math.PI;
-    const x = radius * Math.cos(theta);
-    const z = radius * Math.sin(theta);
-
-    // Top circle
-    positions.push(x, height / 2, z);
-
-    // Bottom circle
-    positions.push(x, -height / 2, z);
-  }
-
-  // Center points for caps
-  const topCenterIndex = positions.length / 3;
-  positions.push(0, height / 2, 0);
-  const bottomCenterIndex = positions.length / 3;
-  positions.push(0, -height / 2, 0);
-
-  // Side indices
-  for (let i = 0; i < segments; i++) {
-    let p1 = i * 2;
-    let p2 = p1 + 1;
-    let p3 = ((i + 1) % segments) * 2;
-    let p4 = p3 + 1;
-
-    // Side face (two triangles)
-    indices.push(p1, p3, p2);
-    indices.push(p3, p4, p2);
-  }
-
-  // Top cap (CCW order for top face)
-  for (let i = 0; i < segments; i++) {
-    let p1 = ((i + 1) % segments) * 2;
-    let p2 = i * 2;
-    indices.push(topCenterIndex, p1, p2);
-  }
-
-  // Bottom cap (CCW order from bottom view)
-  for (let i = 0; i < segments; i++) {
-    let p1 = i * 2 + 1;
-    let p2 = ((i + 1) % segments) * 2 + 1;
-    indices.push(bottomCenterIndex, p1, p2);
-  }
-
-  const normals = computeVertexNormals(positions, indices);
-  return {
-    positions: new Float32Array(positions),
-    colors: interpolateColors(positions.length),
-    indices: new Uint16Array(indices),
-    normals: normals
-  };
+  const colors = interpolateColors(positions.length);
+  const normals = computeNormals(positions, indices);
+  return { positions, colors, indices, normals };
 }
 
 function createSphere(radius = 1, latBands = 24, longBands = 24) {
   const positions = [];
   const indices = [];
-
   for (let lat = 0; lat <= latBands; lat++) {
     const theta = (lat * Math.PI) / latBands;
     const sinTheta = Math.sin(theta);
     const cosTheta = Math.cos(theta);
-
     for (let lon = 0; lon <= longBands; lon++) {
       const phi = (lon * 2 * Math.PI) / longBands;
       const sinPhi = Math.sin(phi);
       const cosPhi = Math.cos(phi);
-
       const x = radius * cosPhi * sinTheta;
       const y = radius * cosTheta;
       const z = radius * sinPhi * sinTheta;
-
       positions.push(x, y, z);
     }
   }
-
   for (let lat = 0; lat < latBands; lat++) {
     for (let lon = 0; lon < longBands; lon++) {
       const first = lat * (longBands + 1) + lon;
       const second = first + longBands + 1;
-
       indices.push(first, second, first + 1);
       indices.push(second, second + 1, first + 1);
     }
   }
-
-  const normals = computeVertexNormals(positions, indices);
-  return {
-    positions: new Float32Array(positions),
-    colors: interpolateColors(positions.length),
-    indices: new Uint16Array(indices),
-    normals: normals
-  };
+  const positionsF = new Float32Array(positions);
+  const indicesF = new Uint16Array(indices);
+  const colors = interpolateColors(positions.length);
+  const normals = computeNormals(positionsF, indicesF);
+  return { positions: positionsF, colors, indices: indicesF, normals };
 }
 
 function createCone(radius = 1, height = 2, segments = 32) {
   const positions = [];
   const indices = [];
-
   const apexIndex = 0;
-  positions.push(0, height / 2, 0); // Apex
-
-  // Circle vertices
+  positions.push(0, height / 2, 0);
   for (let i = 0; i < segments; i++) {
     const theta = (i / segments) * 2 * Math.PI;
     const x = radius * Math.cos(theta);
     const z = radius * Math.sin(theta);
     positions.push(x, -height / 2, z);
   }
-
   const baseCenterIndex = positions.length / 3;
-  positions.push(0, -height / 2, 0); // center of base
-
-  // Side triangles
+  positions.push(0, -height / 2, 0);
   for (let i = 1; i <= segments; i++) {
     const next = i % segments + 1;
     indices.push(apexIndex, i, next);
   }
-
-  // Base triangles
   for (let i = 1; i <= segments; i++) {
     const next = i % segments + 1;
     indices.push(baseCenterIndex, next, i);
   }
-
-  const normals = computeVertexNormals(positions, indices);
-  return {
-    positions: new Float32Array(positions),
-    colors: interpolateColors(positions.length),
-    indices: new Uint16Array(indices),
-    normals: normals
-  };
+  const positionsF = new Float32Array(positions);
+  const indicesF = new Uint16Array(indices);
+  const colors = interpolateColors(positions.length);
+  const normals = computeNormals(positionsF, indicesF);
+  return { positions: positionsF, colors, indices: indicesF, normals };
 }
 
 function createTorus(majorRadius = 1, minorRadius = 0.3, majorSegments = 32, minorSegments = 16) {
   const positions = [];
   const indices = [];
-
   for (let i = 0; i <= majorSegments; i++) {
     const theta = (i / majorSegments) * 2 * Math.PI;
     const cosTheta = Math.cos(theta);
     const sinTheta = Math.sin(theta);
-
     for (let j = 0; j <= minorSegments; j++) {
       const phi = (j / minorSegments) * 2 * Math.PI;
       const cosPhi = Math.cos(phi);
       const sinPhi = Math.sin(phi);
-
       const x = (majorRadius + minorRadius * cosPhi) * cosTheta;
       const y = minorRadius * sinPhi;
       const z = (majorRadius + minorRadius * cosPhi) * sinTheta;
-
       positions.push(x, y, z);
     }
   }
-
   for (let i = 0; i < majorSegments; i++) {
     for (let j = 0; j < minorSegments; j++) {
       const first = i * (minorSegments + 1) + j;
       const second = first + minorSegments + 1;
-
       indices.push(first, second, first + 1);
       indices.push(second, second + 1, first + 1);
     }
   }
-  const normals = computeVertexNormals(positions, indices);
-
-  return {
-    positions: new Float32Array(positions),
-    colors: interpolateColors(positions.length),
-    indices: new Uint16Array(indices), 
-    normals: normals
-  };
+  const positionsF = new Float32Array(positions);
+  const indicesF = new Uint16Array(indices);
+  const colors = interpolateColors(positions.length);
+  const normals = computeNormals(positionsF, indicesF);
+  return { positions: positionsF, colors, indices: indicesF, normals };
 }
 
-function computeVertexNormals(positions, indices) {
+function computeNormals(positions, indices) {
   const normals = new Float32Array(positions.length);
-  const vA = [0, 0, 0], vB = [0, 0, 0], vC = [0, 0, 0];
-  const edge1 = [0, 0, 0], edge2 = [0, 0, 0], n = [0, 0, 0];
-
+  
+  // For each triangle, accumulate normals to vertices
   for (let i = 0; i < indices.length; i += 3) {
     const i0 = indices[i] * 3;
     const i1 = indices[i + 1] * 3;
     const i2 = indices[i + 2] * 3;
 
-    // positions
-    vA[0] = positions[i0]; vA[1] = positions[i0 + 1]; vA[2] = positions[i0 + 2];
-    vB[0] = positions[i1]; vB[1] = positions[i1 + 1]; vB[2] = positions[i1 + 2];
-    vC[0] = positions[i2]; vC[1] = positions[i2 + 1]; vC[2] = positions[i2 + 2];
+    const v0 = [positions[i0], positions[i0 + 1], positions[i0 + 2]];
+    const v1 = [positions[i1], positions[i1 + 1], positions[i1 + 2]];
+    const v2 = [positions[i2], positions[i2 + 1], positions[i2 + 2]];
 
-    // edges
-    edge1[0] = vB[0] - vA[0];
-    edge1[1] = vB[1] - vA[1];
-    edge1[2] = vB[2] - vA[2];
+    const edge1 = [
+      v1[0] - v0[0],
+      v1[1] - v0[1],
+      v1[2] - v0[2]
+    ];
+    const edge2 = [
+      v2[0] - v0[0],
+      v2[1] - v0[1],
+      v2[2] - v0[2]
+    ];
 
-    edge2[0] = vC[0] - vA[0];
-    edge2[1] = vC[1] - vA[1];
-    edge2[2] = vC[2] - vA[2];
+    // Cross product
+    const nx = edge1[1] * edge2[2] - edge1[2] * edge2[1];
+    const ny = edge1[2] * edge2[0] - edge1[0] * edge2[2];
+    const nz = edge1[0] * edge2[1] - edge1[1] * edge2[0];
 
-    // face normal = cross(edge1, edge2)
-    n[0] = edge1[1] * edge2[2] - edge1[2] * edge2[1];
-    n[1] = edge1[2] * edge2[0] - edge1[0] * edge2[2];
-    n[2] = edge1[0] * edge2[1] - edge1[1] * edge2[0];
-
-    // add face normal to each vertex normal
-    normals[i0] += n[0]; normals[i0 + 1] += n[1]; normals[i0 + 2] += n[2];
-    normals[i1] += n[0]; normals[i1 + 1] += n[1]; normals[i1 + 2] += n[2];
-    normals[i2] += n[0]; normals[i2 + 1] += n[1]; normals[i2 + 2] += n[2];
+    // Accumulate the same face normal into each vertex
+    normals[i0] += nx; normals[i0 + 1] += ny; normals[i0 + 2] += nz;
+    normals[i1] += nx; normals[i1 + 1] += ny; normals[i1 + 2] += nz;
+    normals[i2] += nx; normals[i2 + 1] += ny; normals[i2 + 2] += nz;
   }
 
-  // normalize all vertex normals
+  // Normalize the normals
   for (let i = 0; i < normals.length; i += 3) {
-    const x = normals[i], y = normals[i + 1], z = normals[i + 2];
-    const len = Math.hypot(x, y, z) || 1;
-    normals[i] /= len;
-    normals[i + 1] /= len;
-    normals[i + 2] /= len;
+    const nx = normals[i];
+    const ny = normals[i + 1];
+    const nz = normals[i + 2];
+    const len = Math.hypot(nx, ny, nz) || 1.0;
+    normals[i] = nx / len;
+    normals[i + 1] = ny / len;
+    normals[i + 2] = nz / len;
   }
 
   return normals;
-}
-
-function samplePointOnCube() {
-  // pick random face (6), then random u,v in [-0.5, 0.5]
-  const face = Math.floor(Math.random() * 6);
-  const u = Math.random() - 0.5;
-  const v = Math.random() - 0.5;
-  switch (face) {
-    case 0: return [0.5, u, v];   // +X
-    case 1: return [-0.5, u, v];  // -X
-    case 2: return [u, 0.5, v];   // +Y
-    case 3: return [u, -0.5, v];  // -Y
-    case 4: return [u, v, 0.5];   // +Z
-    default: return [u, v, -0.5]; // -Z
-  }
-}
-
-function samplePointOnSphere() {
-  const u = Math.random();
-  const v = Math.random();
-  const theta = 2.0 * Math.PI * u;
-  const phi = Math.acos(2.0 * v - 1.0);
-  const x = Math.sin(phi) * Math.cos(theta);
-  const y = Math.sin(phi) * Math.sin(theta);
-  const z = Math.cos(phi);
-  return [x * 0.5, y * 0.5, z * 0.5];
-}
-
-function samplePointOnCylinder() {
-  const theta = Math.random() * 2.0 * Math.PI;
-  const z = Math.random() - 0.5;
-  const r = 0.5;
-  return [r * Math.cos(theta), z, r * Math.sin(theta)];
-}
-
-function samplePointOnCone() {
-  const theta = Math.random() * 2.0 * Math.PI;
-  const h = Math.random();
-  const r = 0.5 * (1.0 - h);
-  return [r * Math.cos(theta), h - 0.5, r * Math.sin(theta)];
-}
-
-function samplePointOnTorus() {
-  const R = 0.6, r = 0.2;
-  const theta = Math.random() * 2 * Math.PI;
-  const phi = Math.random() * 2 * Math.PI;
-  const x = (R + r * Math.cos(phi)) * Math.cos(theta);
-  const y = (R + r * Math.cos(phi)) * Math.sin(theta);
-  const z = r * Math.sin(phi);
-  return [x, y, z];
-}
-
-// Given a shape, sample a random point on its surface in world space
-function samplePointOnShape(shape) {
-  let pLocal;
-  switch (shape.name) {
-    case "Cube": pLocal = samplePointOnCube(); break;
-    case "Sphere": pLocal = samplePointOnSphere(); break;
-    case "Cylinder": pLocal = samplePointOnCylinder(); break;
-    case "Cone": pLocal = samplePointOnCone(); break;
-    case "Torus": pLocal = samplePointOnTorus(); break;
-    default: pLocal = [0, 0, 0];
-  }
-
-  // Transform by shape's world matrix
-  const M = shape.getFullTransformMatrix(false);
-  const x = pLocal[0], y = pLocal[1], z = pLocal[2];
-  return [
-    M[0]*x + M[4]*y + M[8]*z + M[12],
-    M[1]*x + M[5]*y + M[9]*z + M[13],
-    M[2]*x + M[6]*y + M[10]*z + M[14]
-  ];
 }

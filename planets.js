@@ -9,8 +9,6 @@ function drawPlanets() {
     p1.rotYSpeed = 1.0;
     p1.rotXSpeed = 1.0;
     p1.setColors([.98, .57, 0], [1, .9, 0]);
-    p1.isLight = true;
-    p1.lightIntensity = 5.0;
 
     //Terrain
     let co1 = createShape("Cone", p1);
@@ -166,8 +164,6 @@ function drawPlanets() {
     st1cyl1.scaY = 1;
     st1cyl1.scaZ = 0.4;
     st1cyl1.setColors([.9, .9, .9], [.8, .8, .8])
-    // st1cyl1.isLight = true;
-    // st1cyl1.lightIntensity = 5.0;
 
     // Space station ring cylinders
     let nCylinders = 8;
