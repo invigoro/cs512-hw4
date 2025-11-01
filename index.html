@@ -69,6 +69,11 @@
         <button id="translate-button" onclick="setMode('translate')">Translate</button>
         <button id="scale-button" onclick="setMode('scale')">Scale</button>
       </div>
+      <div>
+        <p>Shading Mode</p>
+        <button id="smooth-shading" onclick="setShadingMode('smooth')">Smooth Shading</button>
+        <button id="flat-shading" onclick="setShadingMode('flat')">Flat Shading</button>
+      </div>
 
       <div id="shape-properties" style="display: none;">
         <div id="shape-rotation-speed">
@@ -87,6 +92,7 @@
           <label for="color-2">Secondary</label>
           <input type="color" id="color-2">
         </div>
+        
         <div id="shape-material">
           <p>Material Properties</p>
           <div> <label for="ambient">Ambient: <span id="ambient-value">0.3</span></label>
@@ -119,10 +125,15 @@ uniform float uTime;
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
 uniform mat4 uModelTransformationMatrix;
+uniform bool uFlatShading;
 
 out vec3 vColor;
 out vec3 vNormal;
 out vec3 vFragPos;
+
+// For flat shading
+flat out vec3 vFlatNormal;
+flat out vec3 vFlatColor;
 
 void main() {
   // Transform position to world space
@@ -131,9 +142,13 @@ void main() {
   
   // Transform normal to world space (using normal matrix)
   mat3 normalMatrix = mat3(transpose(inverse(uModelTransformationMatrix)));
-  vNormal = normalize(normalMatrix * aNormal);
+  vec3 transformedNormal = normalize(normalMatrix * aNormal);
+  
+  vNormal = transformedNormal;
+  vFlatNormal = transformedNormal;
   
   vColor = aColor;
+  vFlatColor = aColor;
   
   gl_Position = uProjectionMatrix * uModelViewMatrix * worldPos;
 }
@@ -146,8 +161,13 @@ in vec3 vColor;
 in vec3 vNormal;
 in vec3 vFragPos;
 
+// For flat shading
+flat in vec3 vFlatNormal;
+flat in vec3 vFlatColor;
+
 uniform float uOpacity;
 uniform vec3 uViewPos;
+uniform bool uFlatShading;
 
 // Two point lights
 uniform vec3 uLightPos1;
@@ -173,7 +193,7 @@ vec3 calculatePointLight(vec3 lightPos, vec3 lightColor, vec3 normal, vec3 fragP
   float diff = max(dot(normal, lightDir), 0.0);
   vec3 diffuse = uDiffuse * diff * objectColor * lightColor;
   
-  // Specular blinn-phong
+  // Specular (Blinn-Phong)
   vec3 halfwayDir = normalize(lightDir + viewDir);
   float spec = pow(max(dot(normal, halfwayDir), 0.0), uShininess);
   vec3 specular = uSpecular * spec * lightColor;
@@ -182,12 +202,15 @@ vec3 calculatePointLight(vec3 lightPos, vec3 lightColor, vec3 normal, vec3 fragP
 }
 
 void main() {
-  vec3 norm = normalize(vNormal);
+  // Choose between smooth and flat shading
+  vec3 norm = uFlatShading ? normalize(vFlatNormal) : normalize(vNormal);
+  vec3 color = uFlatShading ? vFlatColor : vColor;
+  
   vec3 viewDir = normalize(uViewPos - vFragPos);
   
   // Calculate lighting from both point lights
-  vec3 light1 = calculatePointLight(uLightPos1, uLightColor1, norm, vFragPos, viewDir, vColor);
-  vec3 light2 = calculatePointLight(uLightPos2, uLightColor2, norm, vFragPos, viewDir, vColor);
+  vec3 light1 = calculatePointLight(uLightPos1, uLightColor1, norm, vFragPos, viewDir, color);
+  vec3 light2 = calculatePointLight(uLightPos2, uLightColor2, norm, vFragPos, viewDir, color);
   
   vec3 result = light1 + light2;
   
@@ -244,19 +267,24 @@ void main() {
 
     let program, posLoc, colorLoc, normalLoc, uMVM, uPM, uMTM, uOpacityLoc;
     let uViewPos, uLightPos1, uLightPos2, uLightColor1, uLightColor2;
-    let uAmbient, uDiffuse, uSpecular, uShininess;
+    let uAmbient, uDiffuse, uSpecular, uShininess, uFlatShading;
     let tetvbo, tetnbo, tetibo;
     let shapesGlobal = [];
     let selectedObject = null;
     let selectedObjectIndex = null;
     let curId = 0;
     let mode = "rotate";
+    let flatShading = false;
+    
     function getNewId() {
       curId++;
       return curId;
     }
     function setMode(modeName) {
       mode = modeName;
+    }
+    function setShadingMode(shadingMode) {
+      flatShading = (shadingMode === 'flat');
     }
 
     function initBuffer(positions, colors, indices, normals) {
@@ -269,7 +297,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, bnbo);
       gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 
-
+      
       let bnorm = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, bnorm);
       gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
@@ -277,7 +305,7 @@ void main() {
       let bibo = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bibo);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-      return new shape(bvbo, bnbo, bibo, bnorm, indices.length, positions.length / 3, getNewId(), colors.slice(0, 3), colors.slice(colors.length - 3));
+      return new shape(bvbo, bnbo, bibo, bnorm, indices.length, positions.length /3, getNewId(), colors.slice(0, 3), colors.slice(colors.length - 3));
     }
 
     function createShape(shapeName = null, parent = null) {
@@ -299,7 +327,7 @@ void main() {
         selectedObject.children.push(shapeBuffer);
         shapeBuffer.parent = selectedObject;
       }
-      else if (parent) {
+      else if(parent) {
         parent.children.push(shapeBuffer);
         shapeBuffer.parent = parent;
       }
@@ -336,19 +364,20 @@ void main() {
         uMVM = gl.getUniformLocation(program, "uModelViewMatrix");
         uPM = gl.getUniformLocation(program, "uProjectionMatrix");
         uMTM = gl.getUniformLocation(program, "uModelTransformationMatrix");
-
+        
         // Lighting uniforms
         uViewPos = gl.getUniformLocation(program, "uViewPos");
         uLightPos1 = gl.getUniformLocation(program, "uLightPos1");
         uLightPos2 = gl.getUniformLocation(program, "uLightPos2");
         uLightColor1 = gl.getUniformLocation(program, "uLightColor1");
         uLightColor2 = gl.getUniformLocation(program, "uLightColor2");
-
+        
         // Material uniforms
         uAmbient = gl.getUniformLocation(program, "uAmbient");
         uDiffuse = gl.getUniformLocation(program, "uDiffuse");
         uSpecular = gl.getUniformLocation(program, "uSpecular");
         uShininess = gl.getUniformLocation(program, "uShininess");
+        uFlatShading = gl.getUniformLocation(program, "uFlatShading");
       } catch (e) { console.error(e); }
     }
     initShaderProgram();
@@ -392,32 +421,32 @@ void main() {
     let mouseDown = false, lastX, lastY, cubeRotX = 0, cubeRotY = 0;
     let camX = 0, camY = 0, camZ = -6;
 
-    function rgbToHex(rgbArray) {
-      const r = Math.round(rgbArray[0] * 255);
-      const g = Math.round(rgbArray[1] * 255);
-      const b = Math.round(rgbArray[2] * 255);
+function rgbToHex(rgbArray) {
+  const r = Math.round(rgbArray[0] * 255);
+  const g = Math.round(rgbArray[1] * 255);
+  const b = Math.round(rgbArray[2] * 255);
 
-      const toHex = (c) => {
-        const hex = c.toString(16);
-        return hex.length === 1 ? '0' + hex : hex;
-      };
+  const toHex = (c) => {
+    const hex = c.toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
 
-      return '#' + toHex(r) + toHex(g) + toHex(b);
-    }
-    function hexToRgbArray(hex) {
-      const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-      hex = hex.replace(shorthandRegex, function (m, r, g, b) {
-        return r + r + g + g + b + b;
-      });
+  return '#' + toHex(r) + toHex(g) + toHex(b);
+}
+function hexToRgbArray(hex) {
+  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+  hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+    return r + r + g + g + b + b;
+  });
 
-      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
 
-      return result ? [
-        parseInt(result[1], 16) / 255.0,
-        parseInt(result[2], 16) / 255.0,
-        parseInt(result[3], 16) / 255.0
-      ] : null;
-    }
+  return result ? [
+    parseInt(result[1], 16) / 255.0,
+    parseInt(result[2], 16) / 255.0, 
+    parseInt(result[3], 16) / 255.0 
+  ] : null;
+}
 
     function setShapeHtmlProperties(s) {
       document.getElementById("rot-x-speed").value = s.rotXSpeed;
@@ -425,9 +454,9 @@ void main() {
       document.getElementById("rot-z-speed").value = s.rotZSpeed;
       document.getElementById("color-1").value = rgbToHex(s.color1);
       document.getElementById("color-2").value = rgbToHex(s.color2);
-
+      
       // Set material property sliders
-      let mat = s.material || { ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0 };
+      let mat = s.material || {ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0};
       document.getElementById("ambient").value = mat.ambient * 100;
       document.getElementById("ambient-value").textContent = mat.ambient.toFixed(2);
       document.getElementById("diffuse").value = mat.diffuse * 100;
@@ -516,41 +545,41 @@ void main() {
     const rotYSpeed = document.getElementById('rot-y-speed');
     const rotZSpeed = document.getElementById('rot-z-speed');
 
-    rotXSpeed.addEventListener('input', function () {
-      let rotXSpeedVal = this.value;
-      if (selectedObject) {
-        selectedObject.rotXSpeed = rotXSpeedVal;
-      }
+    rotXSpeed.addEventListener('input', function() {
+        let rotXSpeedVal = this.value;
+        if(selectedObject) {
+          selectedObject.rotXSpeed = rotXSpeedVal;
+        }
     });
-    rotYSpeed.addEventListener('input', function () {
-      let rotYSpeedVal = this.value;
-      if (selectedObject) {
-        selectedObject.rotYSpeed = rotYSpeedVal;
-      }
+    rotYSpeed.addEventListener('input', function() {
+        let rotYSpeedVal = this.value;
+        if(selectedObject) {
+          selectedObject.rotYSpeed = rotYSpeedVal;
+        }
     });
-    rotZSpeed.addEventListener('input', function () {
-      let rotZSpeedVal = this.value;
-      if (selectedObject) {
-        selectedObject.rotZSpeed = rotZSpeedVal;
-      }
+    rotZSpeed.addEventListener('input', function() {
+        let rotZSpeedVal = this.value;
+        if(selectedObject) {
+          selectedObject.rotZSpeed = rotZSpeedVal;
+        }
     });
-
+    
     const color1Input = document.getElementById('color-1');
     const color2Input = document.getElementById('color-2');
-    color1Input.addEventListener('input', function () {
-      let c1 = hexToRgbArray(this.value);
-      let c2 = hexToRgbArray(color2Input.value);
-      if (selectedObject) {
-        selectedObject.setColors(c1, c2);
-      }
+    color1Input.addEventListener('input', function() {
+        let c1 = hexToRgbArray(this.value);
+        let c2 = hexToRgbArray(color2Input.value);
+        if(selectedObject) {
+          selectedObject.setColors(c1, c2);
+        }
     });
-
-    color2Input.addEventListener('input', function () {
-      let c2 = hexToRgbArray(this.value);
-      let c1 = hexToRgbArray(color1Input.value);
-      if (selectedObject) {
-        selectedObject.setColors(c1, c2);
-      }
+    
+    color2Input.addEventListener('input', function() {
+        let c2 = hexToRgbArray(this.value);
+        let c1 = hexToRgbArray(color1Input.value);
+        if(selectedObject) {
+          selectedObject.setColors(c1, c2);
+        }
     });
 
     // Material property inputs
@@ -559,48 +588,48 @@ void main() {
     const specularInput = document.getElementById('specular');
     const shininessInput = document.getElementById('shininess');
 
-    ambientInput.addEventListener('input', function () {
-      let value = this.value / 100;
-      document.getElementById('ambient-value').textContent = value.toFixed(2);
-      if (selectedObject) {
-        if (!selectedObject.material) {
-          selectedObject.material = { ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0 };
+    ambientInput.addEventListener('input', function() {
+        let value = this.value / 100;
+        document.getElementById('ambient-value').textContent = value.toFixed(2);
+        if(selectedObject) {
+          if(!selectedObject.material) {
+            selectedObject.material = {ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0};
+          }
+          selectedObject.material.ambient = value;
         }
-        selectedObject.material.ambient = value;
-      }
     });
 
-    diffuseInput.addEventListener('input', function () {
-      let value = this.value / 100;
-      document.getElementById('diffuse-value').textContent = value.toFixed(2);
-      if (selectedObject) {
-        if (!selectedObject.material) {
-          selectedObject.material = { ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0 };
+    diffuseInput.addEventListener('input', function() {
+        let value = this.value / 100;
+        document.getElementById('diffuse-value').textContent = value.toFixed(2);
+        if(selectedObject) {
+          if(!selectedObject.material) {
+            selectedObject.material = {ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0};
+          }
+          selectedObject.material.diffuse = value;
         }
-        selectedObject.material.diffuse = value;
-      }
     });
 
-    specularInput.addEventListener('input', function () {
-      let value = this.value / 100;
-      document.getElementById('specular-value').textContent = value.toFixed(2);
-      if (selectedObject) {
-        if (!selectedObject.material) {
-          selectedObject.material = { ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0 };
+    specularInput.addEventListener('input', function() {
+        let value = this.value / 100;
+        document.getElementById('specular-value').textContent = value.toFixed(2);
+        if(selectedObject) {
+          if(!selectedObject.material) {
+            selectedObject.material = {ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0};
+          }
+          selectedObject.material.specular = value;
         }
-        selectedObject.material.specular = value;
-      }
     });
 
-    shininessInput.addEventListener('input', function () {
-      let value = parseFloat(this.value);
-      document.getElementById('shininess-value').textContent = value.toFixed(0);
-      if (selectedObject) {
-        if (!selectedObject.material) {
-          selectedObject.material = { ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0 };
+    shininessInput.addEventListener('input', function() {
+        let value = parseFloat(this.value);
+        document.getElementById('shininess-value').textContent = value.toFixed(0);
+        if(selectedObject) {
+          if(!selectedObject.material) {
+            selectedObject.material = {ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0};
+          }
+          selectedObject.material.shininess = value;
         }
-        selectedObject.material.shininess = value;
-      }
     });
 
     let proj;
@@ -681,14 +710,14 @@ void main() {
 
     function drawShapeInScene(s) {
       let transformMatrix = s.getFullTransformMatrix(selectedObject == null || s == selectedObject, timeDiff);
-
+      
       // Set material properties for this shape
-      let mat = s.material || { ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0 };
+      let mat = s.material || {ambient: 0.3, diffuse: 0.8, specular: 1.0, shininess: 32.0};
       gl.uniform1f(uAmbient, mat.ambient);
       gl.uniform1f(uDiffuse, mat.diffuse);
       gl.uniform1f(uSpecular, mat.specular);
       gl.uniform1f(uShininess, mat.shininess);
-
+      
       if (s === selectedObject) {
         gl.disable(gl.CULL_FACE);
         gl.uniform1f(uOpacityLoc, pulseOpacity);
@@ -772,6 +801,9 @@ void main() {
       // Light 2: Fill light from the side
       gl.uniform3fv(uLightPos2, [-4, 2, -1]);
       gl.uniform3fv(uLightColor2, [0.6, 0.7, 1.0]); // Slightly blue tinted
+
+      // Set shading mode
+      gl.uniform1i(uFlatShading, flatShading ? 1 : 0);
 
       for (let i = 0; i < shapesGlobal.length; i++) {
         let b = shapesGlobal[i];
