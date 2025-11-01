@@ -166,6 +166,8 @@ function drawPlanets() {
     st1cyl1.scaY = 1;
     st1cyl1.scaZ = 0.4;
     st1cyl1.setColors([.9, .9, .9], [.8, .8, .8])
+    // st1cyl1.isLight = true;
+    // st1cyl1.lightIntensity = 5.0;
 
     // Space station ring cylinders
     let nCylinders = 8;

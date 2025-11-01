@@ -100,27 +100,31 @@
   <script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
 in vec3 aPosition;
 in vec3 aColor;
+in vec3 aNormal;
 
-uniform float uTime; //time in sec
+uniform float uTime;
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
 uniform mat4 uModelTransformationMatrix;
 
 out vec3 vColor;
-out vec3 vWorldPos;
-out vec3 vNormalApprox;
+out vec3 vWorldPos;      // view-space position
+out vec3 vNormalView;    // normal in view-space
 
 void main() {
-  // compute model-space -> view-space transformed position
+  // model-space -> world-space (model transform) -> view-space
   vec4 worldPos4 = uModelTransformationMatrix * vec4(aPosition, 1.0);
-  vec4 viewPos4 = uModelViewMatrix * worldPos4;
+  vec4 viewPos4  = uModelViewMatrix * worldPos4;
 
-  // approximate normal by transforming the vertex direction (works okay for roughly-origin-centered shapes)
-  vec3 normalApprox = normalize((uModelTransformationMatrix * vec4(aPosition, 0.0)).xyz);
+  // compute normal correctly: transform normal by inverse-transpose of modelView
+  // (handles non-uniform scale). Use mat3 to drop translation.
+  mat4 modelView = uModelViewMatrix * uModelTransformationMatrix;
+  mat3 normalMatrix = mat3(transpose(inverse(modelView)));
+  vec3 nView = normalize(normalMatrix * aNormal);
 
   vColor = aColor;
-  vWorldPos = viewPos4.xyz;        // position in view-space for lighting
-  vNormalApprox = normalApprox;    // model-space normal approx (we will use view-space L but normal is okay approx)
+  vWorldPos = viewPos4.xyz;      // view-space position for lighting
+  vNormalView = nView;
 
   gl_Position = uProjectionMatrix * viewPos4;
 }
@@ -131,7 +135,7 @@ precision mediump float;
 
 in vec3 vColor;
 in vec3 vWorldPos;       // view-space pos
-in vec3 vNormalApprox;   // approx normal in model-space
+in vec3 vNormalView;   // approx normal in model-space
 
 uniform float uOpacity;
 uniform vec3 uAmbientColor;
@@ -144,24 +148,19 @@ uniform vec3 uLightColors[32];
 out vec4 fragColor;
 
 void main() {
-  // Convert normal approximation to view-space (approx): we used model-space normal but it's acceptable here
-  vec3 N = normalize(vNormalApprox);
+  vec3 N = normalize(vNormalView);
 
-  // accumulate diffuse lighting
   vec3 diffuse = vec3(0.0);
   for (int i = 0; i < uNumLights; ++i) {
-    vec3 L = normalize(uLightPositions[i] - vWorldPos); // vector from surface point to light (view-space)
+    vec3 L = normalize(uLightPositions[i] - vWorldPos); // both in view-space now
     float ndotl = max(dot(N, L), 0.0);
-    // optionally add distance attenuation (simple)
     float dist = length(uLightPositions[i] - vWorldPos);
-    float att = 1.0 / (1.0 + 0.02 * dist * dist); // tweak constants as needed
+    float att = 1.0 / (1.0 + 0.02 * dist * dist);
     diffuse += uLightColors[i] * ndotl * att;
   }
 
   vec3 color = vColor * (uAmbientColor + diffuse);
-  // tone clamp
   color = clamp(color, 0.0, 1.0);
-
   fragColor = vec4(color, uOpacity);
 }
 </script>
@@ -215,7 +214,7 @@ void main() {
     vertEditor.value = document.getElementById("vertex-shader").textContent;
     fragEditor.value = document.getElementById("fragment-shader").textContent;
 
-    let program, posLoc, colorLoc, uMVM, uPM, uMTM, uOpacityLoc, uNumLightsLoc, uLightPositionsLoc, uLightColorsLoc;
+    let program, posLoc, colorLoc, normalLoc, uMVM, uPM, uMTM, uOpacityLoc, uNumLightsLoc, uLightPositionsLoc, uLightColorsLoc;
     let tetvbo, tetnbo, tetibo;
     let shapesGlobal = [];
     let selectedObject = null;
@@ -301,6 +300,7 @@ void main() {
         gl.useProgram(program);
         posLoc = gl.getAttribLocation(program, "aPosition");
         colorLoc = gl.getAttribLocation(program, "aColor");
+        normalLoc = gl.getAttribLocation(program, "aNormal");
         timeLoc = gl.getUniformLocation(program, "uTime");
         uOpacityLoc = gl.getUniformLocation(program, "uOpacity");
         uMVM = gl.getUniformLocation(program, "uModelViewMatrix");
@@ -602,6 +602,23 @@ uLightColorsLoc = gl.getUniformLocation(program, "uLightColors");
     let timeDiff = Date.now(); //time since last frame
     let pulseOpacity = 1;
 
+function transformLightsToViewSpace(lightPositionsWorld, mvMat) {
+  const out = new Float32Array(lightPositionsWorld.length);
+  for (let i = 0; i < lightPositionsWorld.length; i += 3) {
+    const wx = lightPositionsWorld[i + 0];
+    const wy = lightPositionsWorld[i + 1];
+    const wz = lightPositionsWorld[i + 2];
+    // multiply vec4(wx,wy,wz,1) by mvMat (column-major)
+    const vx = mvMat[0] * wx + mvMat[4] * wy + mvMat[8]  * wz + mvMat[12];
+    const vy = mvMat[1] * wx + mvMat[5] * wy + mvMat[9]  * wz + mvMat[13];
+    const vz = mvMat[2] * wx + mvMat[6] * wy + mvMat[10] * wz + mvMat[14];
+    out[i + 0] = vx;
+    out[i + 1] = vy;
+    out[i + 2] = vz;
+  }
+  return out;
+}
+
     function drawShapeInScene(s) {
       let transformMatrix = s.getFullTransformMatrix(selectedObject == null || s == selectedObject, timeDiff);
 
@@ -618,14 +635,31 @@ uLightColorsLoc = gl.getUniformLocation(program, "uLightColors");
       const wz = transformMatrix[2] * ox + transformMatrix[6] * oy + transformMatrix[10] * oz + basePos[2];
 
       // Accumulate into global light arrays (used later for uniforms)
-      if (lightPositions.length < 32 * 3) { // shader limit
-        lightPositions.push(wx, wy, wz);
-        lightColors.push(
-          s.color1[0] / samples,
-          s.color1[1] / samples,
-          s.color1[2] / samples
-        );
-      }
+      if (lightPositions.length < 32 * 3) {
+  // Convert the shape's local light position (wx, wy, wz) from world → view space
+  const mvx =
+    transformMatrix[0] * wx +
+    transformMatrix[4] * wy +
+    transformMatrix[8] * wz +
+    transformMatrix[12];
+  const mvy =
+    transformMatrix[1] * wx +
+    transformMatrix[5] * wy +
+    transformMatrix[9] * wz +
+    transformMatrix[13];
+  const mvz =
+    transformMatrix[2] * wx +
+    transformMatrix[6] * wy +
+    transformMatrix[10] * wz +
+    transformMatrix[14];
+
+  lightPositions.push(mvx, mvy, mvz);
+  lightColors.push(
+    s.color1[0] / samples,
+    s.color1[1] / samples,
+    s.color1[2] / samples
+  );
+}
     }
   }
 
@@ -645,6 +679,10 @@ uLightColorsLoc = gl.getUniformLocation(program, "uLightColors");
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, s.ibo);
         gl.drawElements(gl.TRIANGLES, s.length, gl.UNSIGNED_SHORT, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, s.norbo);
+        gl.enableVertexAttribArray(normalLoc);
+        gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
       } else {
         // Draw other objects normally NOT WITH THAT OPACITY NONSENSE 
         gl.uniform1f(uOpacityLoc, 1.0);
@@ -663,6 +701,10 @@ uLightColorsLoc = gl.getUniformLocation(program, "uLightColors");
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, s.ibo);
         gl.drawElements(gl.TRIANGLES, s.length, gl.UNSIGNED_SHORT, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, s.norbo);
+        gl.enableVertexAttribArray(normalLoc);
+        gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
       }
 
       if (s.children && s.children.length > 0) { //GENESIS 1:28, PROVERBS 13:22
@@ -712,9 +754,11 @@ lightColors = [];
       // --- Upload lights to shader ---
 const numLights = Math.min(lightPositions.length / 3, 32);
 gl.uniform1i(uNumLightsLoc, numLights);
+
 if (numLights > 0 && uLightPositionsLoc && uLightColorsLoc) {
-gl.uniform3fv(uLightPositionsLoc, new Float32Array(lightPositions));
-gl.uniform3fv(uLightColorsLoc, new Float32Array(lightColors));
+  const lightsView = transformLightsToViewSpace(lightPositions, modelViewMatrix);
+  gl.uniform3fv(uLightPositionsLoc, lightsView);
+  gl.uniform3fv(uLightColorsLoc, new Float32Array(lightColors));
 }
 
     }
