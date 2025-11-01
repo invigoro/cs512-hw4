@@ -80,6 +80,11 @@
           <label for="rot-z-speed">Z</label>
           <input type="range" id="rot-z-speed" name="rot-z-speed" min="0" max="100" value="0">
         </div>
+        <div id="shape-light"><label>
+            <input type="checkbox" id="light-toggle">
+            Acts as light source
+          </label>
+        </div>
         <div id="shape-colors">
           <p>Colors</p>
           <label for="color-1">Primary</label>
@@ -203,37 +208,14 @@ void main() {
     const gl = canvas.getContext("webgl2");
     if (!gl) alert("WebGL2 not supported");
 
-    // --- star lights setup ---
-const MAX_STARS = 32; // must match shader array size
-let stars = []; // array of {pos:[x,y,z], color:[r,g,b]}
-
-function makeRandomStar(radiusMin = 20, radiusMax = 60) {
-  // place far away in world space (not view-space). We'll transform to view-space in render()
-  const phi = Math.acos(2 * Math.random() - 1); // elevation
-  const theta = Math.random() * Math.PI * 2;
-  const r = radiusMin + Math.random() * (radiusMax - radiusMin);
-  const x = r * Math.sin(phi) * Math.cos(theta);
-  const y = r * Math.cos(phi);
-  const z = r * Math.sin(phi) * Math.sin(theta);
-  // small warm-white variation
-  const c = 0.8 + Math.random() * 0.4;
-  return { pos: [x, y, z], color: [c, c, c] };
-}
-
-function initStars(count = 12) {
-  stars = [];
-  for (let i = 0; i < Math.min(count, MAX_STARS); ++i) {
-    stars.push(makeRandomStar());
-  }
-}
-initStars(14);
+    //initStars(14);
 
     let vertEditor = document.getElementById("vertEditor");
     let fragEditor = document.getElementById("fragEditor");
     vertEditor.value = document.getElementById("vertex-shader").textContent;
     fragEditor.value = document.getElementById("fragment-shader").textContent;
 
-    let program, posLoc, colorLoc, uMVM, uPM, uMTM, uOpacityLoc;
+    let program, posLoc, colorLoc, uMVM, uPM, uMTM, uOpacityLoc, uNumLightsLoc, uLightPositionsLoc, uLightColorsLoc;
     let tetvbo, tetnbo, tetibo;
     let shapesGlobal = [];
     let selectedObject = null;
@@ -248,20 +230,25 @@ initStars(14);
       mode = modeName;
     }
 
-    function initBuffer(positions, colors, indices) {
+    function initBuffer(positions, colors, indices, normals) {
 
       let bvbo = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, bvbo);
       gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
 
-      let bnbo = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, bnbo);
+      let bcbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, bcbo);
       gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 
       let bibo = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bibo);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-      return new shape(bvbo, bnbo, bibo, indices.length, positions.length /3, getNewId(), colors.slice(0, 3), colors.slice(colors.length - 3));
+
+      let bnbo = gl.createBuffer(); //normals
+      gl.bindBuffer(gl.ARRAY_BUFFER, bnbo);
+      gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
+
+      return new shape(bvbo, bcbo, bibo, bnbo, indices.length, positions.length / 3, getNewId(), colors.slice(0, 3), colors.slice(colors.length - 3));
     }
 
     function createShape(shapeName = null, parent = null) {
@@ -278,12 +265,12 @@ initStars(14);
         case "Torus": shape = createTorus(); break;
         case "Sphere": shape = createSphere(); break;
       }
-      let shapeBuffer = initBuffer(shape.positions, shape.colors, shape.indices);
+      let shapeBuffer = initBuffer(shape.positions, shape.colors, shape.indices, shape.normals);
       if (selectedObject) {
         selectedObject.children.push(shapeBuffer);
         shapeBuffer.parent = selectedObject;
       }
-      else if(parent) {
+      else if (parent) {
         parent.children.push(shapeBuffer);
         shapeBuffer.parent = parent;
       }
@@ -320,16 +307,11 @@ initStars(14);
         uPM = gl.getUniformLocation(program, "uProjectionMatrix");
         uMTM = gl.getUniformLocation(program, "uModelTransformationMatrix");
 
-//lighting uniforms
-uAmbientColor = gl.getUniformLocation(program, "uAmbientColor");
+        //lighting uniforms
+        uAmbientColor = gl.getUniformLocation(program, "uAmbientColor");
 uNumLightsLoc = gl.getUniformLocation(program, "uNumLights");
-uLightPositionsLoc = []; // we'll upload as flat arrays
-uLightColorsLoc = [];
-// The easiest is to set by name uLightPositions[0], uLightPositions[1], ...:
-for (let i = 0; i < MAX_STARS; ++i) {
-  uLightPositionsLoc.push(gl.getUniformLocation(program, `uLightPositions[${i}]`));
-  uLightColorsLoc.push(gl.getUniformLocation(program, `uLightColors[${i}]`));
-}
+uLightPositionsLoc = gl.getUniformLocation(program, "uLightPositions");
+uLightColorsLoc = gl.getUniformLocation(program, "uLightColors");
 
       } catch (e) { console.error(e); }
     }
@@ -374,36 +356,36 @@ for (let i = 0; i < MAX_STARS; ++i) {
     let mouseDown = false, lastX, lastY, cubeRotX = 0, cubeRotY = 0;
     let camX = 0, camY = 0, camZ = -6;
 
-function rgbToHex(rgbArray) {
-  const r = Math.round(rgbArray[0] * 255);
-  const g = Math.round(rgbArray[1] * 255);
-  const b = Math.round(rgbArray[2] * 255);
+    function rgbToHex(rgbArray) {
+      const r = Math.round(rgbArray[0] * 255);
+      const g = Math.round(rgbArray[1] * 255);
+      const b = Math.round(rgbArray[2] * 255);
 
-  // Convert each component to hex and pad with a leading zero if necessary
-  const toHex = (c) => {
-    const hex = c.toString(16);
-    return hex.length === 1 ? '0' + hex : hex;
-  };
+      // Convert each component to hex and pad with a leading zero if necessary
+      const toHex = (c) => {
+        const hex = c.toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+      };
 
-  return '#' + toHex(r) + toHex(g) + toHex(b);
-}
-function hexToRgbArray(hex) {
-  // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
-  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-  hex = hex.replace(shorthandRegex, function(m, r, g, b) {
-    return r + r + g + g + b + b;
-  });
+      return '#' + toHex(r) + toHex(g) + toHex(b);
+    }
+    function hexToRgbArray(hex) {
+      // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
+      const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+      hex = hex.replace(shorthandRegex, function (m, r, g, b) {
+        return r + r + g + g + b + b;
+      });
 
-  // Use a regular expression to match the hex pairs
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      // Use a regular expression to match the hex pairs
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
 
-  // If the hex string is valid, return the RGB array
-  return result ? [
-    parseInt(result[1], 16) / 255.0, // Convert red hex pair to integer then dec
-    parseInt(result[2], 16) / 255.0, 
-    parseInt(result[3], 16) / 255.0 
-  ] : null;
-}
+      // If the hex string is valid, return the RGB array
+      return result ? [
+        parseInt(result[1], 16) / 255.0, // Convert red hex pair to integer then dec
+        parseInt(result[2], 16) / 255.0,
+        parseInt(result[3], 16) / 255.0
+      ] : null;
+    }
 
     function setShapeHtmlProperties(s) {
       document.getElementById("rot-x-speed").value = s.rotXSpeed;
@@ -411,6 +393,7 @@ function hexToRgbArray(hex) {
       document.getElementById("rot-z-speed").value = s.rotZSpeed;
       document.getElementById("color-1").value = rgbToHex(s.color1);
       document.getElementById("color-2").value = rgbToHex(s.color2);
+      document.getElementById("light-toggle").checked = s.isLight;
     }
 
     canvas.addEventListener('mousedown', e => {
@@ -497,41 +480,49 @@ function hexToRgbArray(hex) {
     const rotZSpeed = document.getElementById('rot-z-speed');
 
     //all rotation speed inputs
-    rotXSpeed.addEventListener('input', function() {
-        let rotXSpeedVal = this.value;
-        if(selectedObject) {
-          selectedObject.rotXSpeed = rotXSpeedVal;
-        }
+    rotXSpeed.addEventListener('input', function () {
+      let rotXSpeedVal = this.value;
+      if (selectedObject) {
+        selectedObject.rotXSpeed = rotXSpeedVal;
+      }
     });
-    rotYSpeed.addEventListener('input', function() {
-        let rotYSpeedVal = this.value;
-        if(selectedObject) {
-          selectedObject.rotYSpeed = rotYSpeedVal;
-        }
+    rotYSpeed.addEventListener('input', function () {
+      let rotYSpeedVal = this.value;
+      if (selectedObject) {
+        selectedObject.rotYSpeed = rotYSpeedVal;
+      }
     });
-    rotZSpeed.addEventListener('input', function() {
-        let rotZSpeedVal = this.value;
-        if(selectedObject) {
-          selectedObject.rotZSpeed = rotZSpeedVal;
-        }
+    rotZSpeed.addEventListener('input', function () {
+      let rotZSpeedVal = this.value;
+      if (selectedObject) {
+        selectedObject.rotZSpeed = rotZSpeedVal;
+      }
     });
     //color inputs
     const color1Input = document.getElementById('color-1');
     const color2Input = document.getElementById('color-2');
-    color1Input.addEventListener('input', function() {
-        let c1 = hexToRgbArray(this.value);
-        let c2 = hexToRgbArray(color2Input.value);
-        if(selectedObject) {
-          selectedObject.setColors(c1, c2);
-        }
+    color1Input.addEventListener('input', function () {
+      let c1 = hexToRgbArray(this.value);
+      let c2 = hexToRgbArray(color2Input.value);
+      if (selectedObject) {
+        selectedObject.setColors(c1, c2);
+      }
     });
-    
-    color2Input.addEventListener('input', function() {
-        let c2 = hexToRgbArray(this.value);
-        let c1 = hexToRgbArray(color1Input.value);
-        if(selectedObject) {
-          selectedObject.setColors(c1, c2);
-        }
+
+    color2Input.addEventListener('input', function () {
+      let c2 = hexToRgbArray(this.value);
+      let c1 = hexToRgbArray(color1Input.value);
+      if (selectedObject) {
+        selectedObject.setColors(c1, c2);
+      }
+    });
+
+    const lightToggle = document.getElementById("light-toggle");
+
+    lightToggle.addEventListener("change", () => {
+      if (selectedObject) {
+        selectedObject.isLight = lightToggle.checked;
+      }
     });
 
     let proj;
@@ -613,6 +604,31 @@ function hexToRgbArray(hex) {
 
     function drawShapeInScene(s) {
       let transformMatrix = s.getFullTransformMatrix(selectedObject == null || s == selectedObject, timeDiff);
+
+      if (s.isLight) {
+    const basePos = s.getWorldPosition();
+    const samples = 6; // how many “sub-lights” to simulate
+    for (let i = 0; i < samples; i++) {
+      const ox = (Math.random() - 0.5) * s.scaX;
+      const oy = (Math.random() - 0.5) * s.scaY;
+      const oz = (Math.random() - 0.5) * s.scaZ;
+
+      const wx = transformMatrix[0] * ox + transformMatrix[4] * oy + transformMatrix[8] * oz + basePos[0];
+      const wy = transformMatrix[1] * ox + transformMatrix[5] * oy +transformMatrix[9] * oz + basePos[1];
+      const wz = transformMatrix[2] * ox + transformMatrix[6] * oy + transformMatrix[10] * oz + basePos[2];
+
+      // Accumulate into global light arrays (used later for uniforms)
+      if (lightPositions.length < 32 * 3) { // shader limit
+        lightPositions.push(wx, wy, wz);
+        lightColors.push(
+          s.color1[0] / samples,
+          s.color1[1] / samples,
+          s.color1[2] / samples
+        );
+      }
+    }
+  }
+
       if (s === selectedObject) { //only does this for the ONE selected obj
         gl.disable(gl.CULL_FACE);
         gl.uniform1f(uOpacityLoc, pulseOpacity);
@@ -656,6 +672,8 @@ function hexToRgbArray(hex) {
       }
     }
 
+      var lightPositions = [];
+      var lightColors = [];
 
     function render() {
       gl.useProgram(program);
@@ -676,27 +694,9 @@ function hexToRgbArray(hex) {
       let modelViewMatrix = mat4Translate(mat4Identity(), [camX, camY, camZ]);
       gl.uniformMatrix4fv(uMVM, false, modelViewMatrix);
 
+lightPositions = [];
+lightColors = [];
       gl.uniform3fv(uAmbientColor, new Float32Array([0.05, 0.05, 0.06]));
-
-// compute view-space positions for each star and upload
-const numToUpload = Math.min(stars.length, MAX_STARS);
-gl.uniform1i(uNumLightsLoc, numToUpload);
-
-// We need to transform star world positions into view-space: viewPos = uModelViewMatrix * vec4(worldPos,1)
-for (let i = 0; i < numToUpload; ++i) {
-  const s = stars[i];
-  const wp = s.pos; // world position [x,y,z]
-
-  // multiply 4x4 matrix (column-major) uMVM by vec4(wp,1)
-  // uMVM is the same view matrix you passed earlier as "modelViewMatrix"
-  const M = modelViewMatrix; // that's the js variable you used to upload uMVM earlier
-  const vx = M[0]*wp[0] + M[4]*wp[1] + M[8]*wp[2] + M[12];
-  const vy = M[1]*wp[0] + M[5]*wp[1] + M[9]*wp[2] + M[13];
-  const vz = M[2]*wp[0] + M[6]*wp[1] + M[10]*wp[2] + M[14];
-  // upload as view-space
-  gl.uniform3fv(uLightPositionsLoc[i], new Float32Array([vx, vy, vz]));
-  gl.uniform3fv(uLightColorsLoc[i], new Float32Array(stars[i].color));
-}
 
       time = (Date.now() - startTime) / 1000;  // seconds passed total
       timeDiff = (Date.now() - prevFrameTime) / 1000; //seconds since last frame
@@ -708,6 +708,15 @@ for (let i = 0; i < numToUpload; ++i) {
         let b = shapesGlobal[i];
         drawShapeInScene(b);
       }
+
+      // --- Upload lights to shader ---
+const numLights = Math.min(lightPositions.length / 3, 32);
+gl.uniform1i(uNumLightsLoc, numLights);
+if (numLights > 0 && uLightPositionsLoc && uLightColorsLoc) {
+gl.uniform3fv(uLightPositionsLoc, new Float32Array(lightPositions));
+gl.uniform3fv(uLightColorsLoc, new Float32Array(lightColors));
+}
+
     }
 
     // Initialize when page loads

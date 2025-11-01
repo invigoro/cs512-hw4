@@ -9,6 +9,8 @@ function drawPlanets() {
     p1.rotYSpeed = 1.0;
     p1.rotXSpeed = 1.0;
     p1.setColors([.98, .57, 0], [1, .9, 0]);
+    p1.isLight = true;
+    p1.lightIntensity = 5.0;
 
     //Terrain
     let co1 = createShape("Cone", p1);
