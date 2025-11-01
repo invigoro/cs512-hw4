@@ -183,7 +183,7 @@ void main() {
       mode = modeName;
     }
 
-    function initBuffer(positions, colors, indices) {
+    function initBuffer(positions, colors, indices, normals) {
 
       let bvbo = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, bvbo);
@@ -193,10 +193,15 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, bnbo);
       gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 
+      
+      let bnorm = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, bnorm);
+      gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
+
       let bibo = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bibo);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-      return new shape(bvbo, bnbo, bibo, indices.length, positions.length /3, getNewId(), colors.slice(0, 3), colors.slice(colors.length - 3));
+      return new shape(bvbo, bnbo, bibo, bnorm, indices.length, positions.length /3, getNewId(), colors.slice(0, 3), colors.slice(colors.length - 3));
     }
 
     function createShape(shapeName = null, parent = null) {
@@ -213,7 +218,7 @@ void main() {
         case "Torus": shape = createTorus(); break;
         case "Sphere": shape = createSphere(); break;
       }
-      let shapeBuffer = initBuffer(shape.positions, shape.colors, shape.indices);
+      let shapeBuffer = initBuffer(shape.positions, shape.colors, shape.indices, shape.normals);
       if (selectedObject) {
         selectedObject.children.push(shapeBuffer);
         shapeBuffer.parent = selectedObject;
