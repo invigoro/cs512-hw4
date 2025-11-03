@@ -65,8 +65,8 @@
       <button id="primitive-insert" onclick="createShape();">Add New Shape</button>
       <div>
         <p>Choose Transform Type</p>
-        <button id="rotate-button" onclick="setMode('rotate')">Rotate</button>
         <button id="translate-button" onclick="setMode('translate')">Translate</button>
+        <button id="rotate-button" onclick="setMode('rotate')">Rotate</button>
         <button id="scale-button" onclick="setMode('scale')">Scale</button>
       </div>
       <div>
@@ -273,7 +273,7 @@ void main() {
     let selectedObject = null;
     let selectedObjectIndex = null;
     let curId = 0;
-    let mode = "rotate";
+    let mode = "translate";
     let flatShading = false;
     
     function getNewId() {
