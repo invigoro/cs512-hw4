@@ -9,35 +9,26 @@ function drawPlanets() {
     p1.rotYSpeed = 1.0;
     p1.rotXSpeed = 1.0;
     p1.setColors([.98, .57, 0], [1, .9, 0]);
+    p1.material.shininess = 128;
+    p1.material.specular = 1.0;
+    p1.material.diffuse = 0;
+    p1.material.ambient = .65;
 
-    //Terrain
-    let co1 = createShape("Cone", p1);
-    co1.posY = 0.8;
-    co1.scaY = 0.5;
-    co1.scaX = 0.5;
-    co1.scaZ = 0.5;
-    co1.setColors([.98, .57, 0], [1, .9, 0]);
-    let co2 = createShape("Cone", p1);
-    co2.posY = -0.8;
-    co2.scaY = 0.5;
-    co2.scaX = 0.5;
-    co2.scaZ = 0.5;
-    co2.rotX = Math.PI;
-    co2.setColors([.98, .57, 0], [1, .9, 0]);
-    let co3 = createShape("Cone", p1);
-    co3.posX = 0.8;
-    co3.scaY = 0.6;
-    co3.scaX = 0.6;
-    co3.scaZ = 0.6;
-    co3.rotZ = -Math.PI / 2;
-    co3.setColors([.98, .57, 0], [1, .9, 0]);
-    let cy1 = createShape("Cylinder", p1);
-    cy1.posZ = 0.9;
-    cy1.scaX = 0.2;
-    cy1.scaY = 0.2;
-    cy1.scaZ = 0.2;
-    cy1.rotX = Math.PI / 2;
-    cy1.setColors([.98, .57, 0], [1, .9, 0]);
+    for(let i = 0; i < 5; i++) {
+        let sp = createShape("Cylinder", p1);
+        sp.scaY = 1;
+        sp.scaX = 0.25;
+        sp.scaZ = 0.25;
+        sp.setColors([.95, .54, 0], [.97, .87, 0]);
+        sp.rotX = Math.random() * 2 * Math.PI;
+        sp.rotY = Math.random() * 2 * Math.PI;
+        sp.rotZ = Math.random() * 2 * Math.PI;
+        sp.material.ambient = 0.4;
+        sp.material.specular = .16;
+        sp.material.diffuse = .5;
+        sp.material.shininess = 3;
+    }
+
 
     //planet 1 ring
     // let t1 = createShape("Torus", s1);
@@ -157,6 +148,10 @@ function drawPlanets() {
     st1.rotZSpeed = 0;
     st1.rotXSpeed = 0;
     st1.setColors([1, 1, 1], [1, 1, 1])
+       st1.material.diffuse = 0.3;
+        st1.material.ambient = 0.3;
+        st1.material.shininess = 100;
+        st1.material.specular = .13;
 
     //Space Station center cylinder
     let st1cyl1 = createShape("Cylinder", st1);
@@ -164,6 +159,10 @@ function drawPlanets() {
     st1cyl1.scaY = 1;
     st1cyl1.scaZ = 0.4;
     st1cyl1.setColors([.9, .9, .9], [.8, .8, .8])
+       st1cyl1.material.diffuse = 0.3;
+        st1cyl1.material.ambient = 0.3;
+        st1cyl1.material.shininess = 100;
+        st1cyl1.material.specular = .13;
 
     // Space station ring cylinders
     let nCylinders = 8;
@@ -182,6 +181,10 @@ function drawPlanets() {
         cyl.scaY = 0.6;
         cyl.scaZ = 0.2;
         cyl.setColors([1, 1, 1], [.9, .9, .9])
+        cyl.material.diffuse = 0.3;
+        cyl.material.ambient = 0.3;
+        cyl.material.shininess = 100;
+        cyl.material.specular = .13;
     }
 
     //planet 5
