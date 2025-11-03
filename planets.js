@@ -15,11 +15,12 @@ function drawPlanets() {
     p1.material.ambient = .65;
 
     //sunspots
-    for(let i = 0; i < 5; i++) {
+    for(let i = 0; i < 6; i++) {
         let sp = createShape("Cylinder", p1);
         sp.scaY = 1;
-        sp.scaX = 0.25;
-        sp.scaZ = 0.25;
+        let width = 0.05 + (Math.random() * 0.2);
+        sp.scaX = width;
+        sp.scaZ = width;
         sp.setColors([.95, .54, 0], [.97, .87, 0]);
         sp.rotX = Math.random() * 2 * Math.PI;
         sp.rotY = Math.random() * 2 * Math.PI;
