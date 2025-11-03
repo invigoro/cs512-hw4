@@ -14,6 +14,7 @@ function drawPlanets() {
     p1.material.diffuse = 0;
     p1.material.ambient = .65;
 
+    //sunspots
     for(let i = 0; i < 5; i++) {
         let sp = createShape("Cylinder", p1);
         sp.scaY = 1;
@@ -29,12 +30,24 @@ function drawPlanets() {
         sp.material.shininess = 3;
     }
 
+    //stars
+    const STAR_COUNT = 100;
+    const xRange = 25;
+    const yRange = 20;
+    for(let i = 0; i < STAR_COUNT; i++){
+        let star = createShape("Sphere", null);
+        star.posZ = -10 - (Math.random() * 5);
+        star.posX = -(xRange / 2.0) + (Math.random() * xRange);
+        star.posY = -(yRange / 2.0) + (Math.random() * yRange);
+        star.scaX = 0.05;
+        star.scaY = 0.05;
+        star.scaZ = 0.05;
+        star.setColors([1,1,1], [1 - (Math.random() * 0.4), 1 - (Math.random() * 0.4), 1 - (Math.random() * 0.4)])
+        star.rotXSpeed = Math.random() * 30;
+        star.material.shininess = 120;
+        star.material.ambient = .5;
 
-    //planet 1 ring
-    // let t1 = createShape("Torus", s1);
-    // t1.scaX = 2;
-    // t1.scaY = 1;
-    // t1.scaZ = 2;
+    }
 
     //Planet 2
     let p2 = createShape("Sphere", p1);
