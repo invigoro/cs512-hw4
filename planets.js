@@ -11,7 +11,7 @@ function drawPlanets() {
     p1.setColors([.98, .57, 0], [1, .9, 0]);
     p1.material.shininess = 128;
     p1.material.specular = 1.0;
-    p1.material.diffuse = 0;
+    p1.material.diffuse = .50;
     p1.material.ambient = .65;
 
     //sunspots
